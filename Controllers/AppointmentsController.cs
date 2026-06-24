@@ -48,4 +48,52 @@ public class AppointmentsController : ControllerBase
             );
         }
     }
+
+    [HttpGet("{idAppointment:int}")]
+    [ProducesResponseType(typeof(AppointmentDetailsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<AppointmentDetailsDto>> GetAppointmentById(
+        [FromRoute] int idAppointment,
+        CancellationToken cancellationToken
+    )
+    {
+        if (idAppointment <= 0)
+        {
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Appointment id must be greater than 0."
+            });
+        }
+
+        try
+        {
+            var appointment = await _appointmentService.GetAppointmentByIdAsync(
+                idAppointment,
+                cancellationToken
+            );
+
+            if (appointment is null)
+            {
+                return NotFound(new ErrorResponseDto
+                {
+                    Message = $"Appointment with id {idAppointment} was not found."
+                });
+            }
+
+            return Ok(appointment);
+        }
+        catch (SqlException)
+        {
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new ErrorResponseDto
+                {
+                    Message = "A database error occurred while retrieving appointment details."
+                }
+            );
+        }
+    }
+
 }
