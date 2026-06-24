@@ -1,6 +1,7 @@
 using System.Data;
 using ApbdCw6AdonetS26655.DTOs;
 using Microsoft.Data.SqlClient;
+using ApbdCw6AdonetS26655.Exceptions;
 
 namespace ApbdCw6AdonetS26655.Services;
 
@@ -148,12 +149,54 @@ public class AppointmentService : IAppointmentService
         };
     }
 
-    public Task<int> CreateAppointmentAsync(
+    public async Task<int> CreateAppointmentAsync(
         CreateAppointmentRequestDto request,
         CancellationToken cancellationToken
     )
     {
-        throw new NotImplementedException();
+        ValidateCreateAppointmentRequest(request);
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        if (!await ActivePatientExistsAsync(connection, request.IdPatient, cancellationToken))
+        {
+            throw new InvalidAppointmentRequestException("Patient does not exist or is inactive.");
+        }
+
+        if (!await ActiveDoctorExistsAsync(connection, request.IdDoctor, cancellationToken))
+        {
+            throw new InvalidAppointmentRequestException("Doctor does not exist or is inactive.");
+        }
+
+        if (await DoctorHasScheduledAppointmentAtAsync(
+                connection,
+                request.IdDoctor,
+                request.AppointmentDate,
+                cancellationToken
+            ))
+        {
+            throw new AppointmentConflictException(
+                "Doctor already has a scheduled appointment at the selected time."
+            );
+        }
+
+        await using var command = new SqlCommand("""
+        INSERT INTO dbo.Appointments
+            (IdPatient, IdDoctor, AppointmentDate, Status, Reason)
+        OUTPUT INSERTED.IdAppointment
+        VALUES
+            (@IdPatient, @IdDoctor, @AppointmentDate, N'Scheduled', @Reason);
+        """, connection);
+
+        command.Parameters.Add("@IdPatient", SqlDbType.Int).Value = request.IdPatient;
+        command.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = request.IdDoctor;
+        command.Parameters.Add("@AppointmentDate", SqlDbType.DateTime2).Value = request.AppointmentDate;
+        command.Parameters.Add("@Reason", SqlDbType.NVarChar, 250).Value = request.Reason.Trim();
+
+        var insertedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        return Convert.ToInt32(insertedId);
     }
 
     public Task<bool> UpdateAppointmentAsync(
@@ -172,4 +215,96 @@ public class AppointmentService : IAppointmentService
     {
         throw new NotImplementedException();
     }
+
+    private static void ValidateCreateAppointmentRequest(CreateAppointmentRequestDto request)
+    {
+        if (request.IdPatient <= 0)
+        {
+            throw new InvalidAppointmentRequestException("Patient id must be greater than 0.");
+        }
+
+        if (request.IdDoctor <= 0)
+        {
+            throw new InvalidAppointmentRequestException("Doctor id must be greater than 0.");
+        }
+
+        if (request.AppointmentDate <= DateTime.UtcNow)
+        {
+            throw new InvalidAppointmentRequestException("Appointment date cannot be in the past.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            throw new InvalidAppointmentRequestException("Reason cannot be empty.");
+        }
+
+        if (request.Reason.Trim().Length > 250)
+        {
+            throw new InvalidAppointmentRequestException("Reason cannot be longer than 250 characters.");
+        }
+    }
+
+    private static async Task<bool> ActivePatientExistsAsync(
+        SqlConnection connection,
+        int idPatient,
+        CancellationToken cancellationToken
+    )
+    {
+        await using var command = new SqlCommand("""
+        SELECT COUNT(1)
+        FROM dbo.Patients
+        WHERE IdPatient = @IdPatient
+          AND IsActive = 1;
+        """, connection);
+
+        command.Parameters.Add("@IdPatient", SqlDbType.Int).Value = idPatient;
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+
+        return Convert.ToInt32(result) > 0;
+    }
+
+    private static async Task<bool> ActiveDoctorExistsAsync(
+        SqlConnection connection,
+        int idDoctor,
+        CancellationToken cancellationToken
+    )
+    {
+        await using var command = new SqlCommand("""
+        SELECT COUNT(1)
+        FROM dbo.Doctors
+        WHERE IdDoctor = @IdDoctor
+          AND IsActive = 1;
+        """, connection);
+
+        command.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = idDoctor;
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+
+        return Convert.ToInt32(result) > 0;
+    }
+
+    private static async Task<bool> DoctorHasScheduledAppointmentAtAsync(
+        SqlConnection connection,
+        int idDoctor,
+        DateTime appointmentDate,
+        CancellationToken cancellationToken
+    )
+    {
+        await using var command = new SqlCommand("""
+        SELECT COUNT(1)
+        FROM dbo.Appointments
+        WHERE IdDoctor = @IdDoctor
+          AND AppointmentDate = @AppointmentDate
+          AND Status = N'Scheduled';
+        """, connection);
+
+        command.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = idDoctor;
+        command.Parameters.Add("@AppointmentDate", SqlDbType.DateTime2).Value = appointmentDate;
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+
+        return Convert.ToInt32(result) > 0;
+    }
+
 }

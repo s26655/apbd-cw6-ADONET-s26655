@@ -2,6 +2,7 @@ using ApbdCw6AdonetS26655.DTOs;
 using ApbdCw6AdonetS26655.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using ApbdCw6AdonetS26655.Exceptions;
 
 namespace ApbdCw6AdonetS26655.Controllers;
 
@@ -91,6 +92,60 @@ public class AppointmentsController : ControllerBase
                 new ErrorResponseDto
                 {
                     Message = "A database error occurred while retrieving appointment details."
+                }
+            );
+        }
+    }
+
+    [HttpPost]
+    [ProducesResponseType(typeof(AppointmentDetailsDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<AppointmentDetailsDto>> CreateAppointment(
+    [FromBody] CreateAppointmentRequestDto request,
+    CancellationToken cancellationToken
+)
+    {
+        try
+        {
+            var idAppointment = await _appointmentService.CreateAppointmentAsync(
+                request,
+                cancellationToken
+            );
+
+            var createdAppointment = await _appointmentService.GetAppointmentByIdAsync(
+                idAppointment,
+                cancellationToken
+            );
+
+            return CreatedAtAction(
+                nameof(GetAppointmentById),
+                new { idAppointment },
+                createdAppointment
+            );
+        }
+        catch (InvalidAppointmentRequestException ex)
+        {
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = ex.Message
+            });
+        }
+        catch (AppointmentConflictException ex)
+        {
+            return Conflict(new ErrorResponseDto
+            {
+                Message = ex.Message
+            });
+        }
+        catch (SqlException)
+        {
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new ErrorResponseDto
+                {
+                    Message = "A database error occurred while creating the appointment."
                 }
             );
         }
