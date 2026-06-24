@@ -1,0 +1,6 @@
+@apbd_cw6_ADONET_s26655_HostAddress = http://localhost:5253
+
+GET {{apbd_cw6_ADONET_s26655_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
