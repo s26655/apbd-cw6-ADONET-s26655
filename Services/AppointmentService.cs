@@ -290,12 +290,40 @@ public class AppointmentService : IAppointmentService
         return affectedRows > 0;
     }
 
-    public Task<bool> DeleteAppointmentAsync(
+    public async Task<bool> DeleteAppointmentAsync(
         int idAppointment,
         CancellationToken cancellationToken
     )
     {
-        throw new NotImplementedException();
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var existingAppointment = await GetAppointmentStateAsync(
+            connection,
+            idAppointment,
+            cancellationToken
+        );
+
+        if (existingAppointment is null)
+        {
+            return false;
+        }
+
+        if (existingAppointment.Status == "Completed")
+        {
+            throw new AppointmentConflictException("Completed appointment cannot be deleted.");
+        }
+
+        await using var command = new SqlCommand("""
+        DELETE FROM dbo.Appointments
+        WHERE IdAppointment = @IdAppointment;
+        """, connection);
+
+        command.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+
+        var affectedRows = await command.ExecuteNonQueryAsync(cancellationToken);
+
+        return affectedRows > 0;
     }
 
     private static void ValidateCreateAppointmentRequest(CreateAppointmentRequestDto request)

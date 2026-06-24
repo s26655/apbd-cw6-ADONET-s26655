@@ -220,4 +220,59 @@ public class AppointmentsController : ControllerBase
         }
     }
 
+    [HttpDelete("{idAppointment:int}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> DeleteAppointment(
+    [FromRoute] int idAppointment,
+    CancellationToken cancellationToken
+)
+    {
+        if (idAppointment <= 0)
+        {
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Appointment id must be greater than 0."
+            });
+        }
+
+        try
+        {
+            var wasDeleted = await _appointmentService.DeleteAppointmentAsync(
+                idAppointment,
+                cancellationToken
+            );
+
+            if (!wasDeleted)
+            {
+                return NotFound(new ErrorResponseDto
+                {
+                    Message = $"Appointment with id {idAppointment} was not found."
+                });
+            }
+
+            return NoContent();
+        }
+        catch (AppointmentConflictException ex)
+        {
+            return Conflict(new ErrorResponseDto
+            {
+                Message = ex.Message
+            });
+        }
+        catch (SqlException)
+        {
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new ErrorResponseDto
+                {
+                    Message = "A database error occurred while deleting the appointment."
+                }
+            );
+        }
+    }
+
 }
