@@ -1,0 +1,154 @@
+@baseUrl = http://localhost:5253
+
+### Get all appointments
+GET {{baseUrl}}/api/appointments
+
+### Get scheduled appointments
+GET {{baseUrl}}/api/appointments?status=Scheduled
+
+### Get appointments by patient last name
+GET {{baseUrl}}/api/appointments?patientLastName=Kowalska
+
+### Get appointments by doctor id
+GET {{baseUrl}}/api/appointments?idDoctor=1
+
+### Get appointments by combined filters
+GET {{baseUrl}}/api/appointments?status=Scheduled&idDoctor=1
+
+### Get appointment details
+GET {{baseUrl}}/api/appointments/1
+
+### Get non-existing appointment details
+GET {{baseUrl}}/api/appointments/999999
+
+### Create valid appointment
+POST {{baseUrl}}/api/appointments
+Content-Type: application/json
+
+{
+  "idPatient": 1,
+  "idDoctor": 2,
+  "appointmentDate": "2026-08-15T10:30:00",
+  "reason": "Control visit"
+}
+
+### Create appointment with conflicting doctor time
+# Run this request after the previous create request.
+POST {{baseUrl}}/api/appointments
+Content-Type: application/json
+
+{
+  "idPatient": 1,
+  "idDoctor": 2,
+  "appointmentDate": "2026-08-15T10:30:00",
+  "reason": "Control visit"
+}
+
+### Create appointment in the past
+POST {{baseUrl}}/api/appointments
+Content-Type: application/json
+
+{
+  "idPatient": 1,
+  "idDoctor": 2,
+  "appointmentDate": "2020-01-01T10:30:00",
+  "reason": "Invalid past appointment"
+}
+
+### Create appointment with empty reason
+POST {{baseUrl}}/api/appointments
+Content-Type: application/json
+
+{
+  "idPatient": 1,
+  "idDoctor": 2,
+  "appointmentDate": "2026-08-16T10:30:00",
+  "reason": "   "
+}
+
+### Create appointment for inactive patient
+POST {{baseUrl}}/api/appointments
+Content-Type: application/json
+
+{
+  "idPatient": 4,
+  "idDoctor": 2,
+  "appointmentDate": "2026-08-17T10:30:00",
+  "reason": "Visit for inactive patient"
+}
+
+### Create appointment for inactive doctor
+POST {{baseUrl}}/api/appointments
+Content-Type: application/json
+
+{
+  "idPatient": 1,
+  "idDoctor": 4,
+  "appointmentDate": "2026-08-18T10:30:00",
+  "reason": "Visit for inactive doctor"
+}
+
+### Update appointment
+PUT {{baseUrl}}/api/appointments/2
+Content-Type: application/json
+
+{
+  "idPatient": 2,
+  "idDoctor": 2,
+  "appointmentDate": "2026-08-20T12:00:00",
+  "status": "Scheduled",
+  "reason": "Rescheduled dermatology consultation",
+  "internalNotes": "Patient asked for a later hour."
+}
+
+### Update non-existing appointment
+PUT {{baseUrl}}/api/appointments/999999
+Content-Type: application/json
+
+{
+  "idPatient": 1,
+  "idDoctor": 1,
+  "appointmentDate": "2026-08-21T12:00:00",
+  "status": "Scheduled",
+  "reason": "Non-existing appointment update",
+  "internalNotes": null
+}
+
+### Update with invalid status
+PUT {{baseUrl}}/api/appointments/2
+Content-Type: application/json
+
+{
+  "idPatient": 2,
+  "idDoctor": 2,
+  "appointmentDate": "2026-08-20T12:00:00",
+  "status": "InvalidStatus",
+  "reason": "Invalid status test",
+  "internalNotes": null
+}
+
+### Try changing date of completed appointment
+PUT {{baseUrl}}/api/appointments/4
+Content-Type: application/json
+
+{
+  "idPatient": 1,
+  "idDoctor": 1,
+  "appointmentDate": "2026-08-22T12:00:00",
+  "status": "Completed",
+  "reason": "Completed appointment date change attempt",
+  "internalNotes": "Should not be allowed."
+}
+
+### Delete scheduled appointment
+# This request is destructive. Use an existing Scheduled appointment id.
+DELETE {{baseUrl}}/api/appointments/1
+
+### Delete non-existing appointment
+DELETE {{baseUrl}}/api/appointments/999999
+
+### Try deleting completed appointment
+DELETE {{baseUrl}}/api/appointments/4
+
+### Delete with invalid id
+DELETE {{baseUrl}}/api/appointments/0
