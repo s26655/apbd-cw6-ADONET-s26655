@@ -8,6 +8,12 @@ namespace ApbdCw6AdonetS26655.Services;
 public class AppointmentService : IAppointmentService
 {
     private readonly string _connectionString;
+    private static readonly HashSet<string> AllowedAppointmentStatuses = new(StringComparer.Ordinal)
+{
+    "Scheduled",
+    "Completed",
+    "Cancelled"
+};
 
     public AppointmentService(IConfiguration configuration)
     {
@@ -199,13 +205,89 @@ public class AppointmentService : IAppointmentService
         return Convert.ToInt32(insertedId);
     }
 
-    public Task<bool> UpdateAppointmentAsync(
+    public async Task<bool> UpdateAppointmentAsync(
         int idAppointment,
         UpdateAppointmentRequestDto request,
         CancellationToken cancellationToken
     )
     {
-        throw new NotImplementedException();
+        ValidateUpdateAppointmentRequest(request);
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var existingAppointment = await GetAppointmentStateAsync(
+            connection,
+            idAppointment,
+            cancellationToken
+        );
+
+        if (existingAppointment is null)
+        {
+            return false;
+        }
+
+        if (!await ActivePatientExistsAsync(connection, request.IdPatient, cancellationToken))
+        {
+            throw new InvalidAppointmentRequestException("Patient does not exist or is inactive.");
+        }
+
+        if (!await ActiveDoctorExistsAsync(connection, request.IdDoctor, cancellationToken))
+        {
+            throw new InvalidAppointmentRequestException("Doctor does not exist or is inactive.");
+        }
+
+        if (existingAppointment.Status == "Completed"
+            && existingAppointment.AppointmentDate != request.AppointmentDate)
+        {
+            throw new AppointmentConflictException("Completed appointment date cannot be changed.");
+        }
+
+        var shouldCheckDoctorConflict =
+            request.Status == "Scheduled"
+            && (existingAppointment.IdDoctor != request.IdDoctor
+                || existingAppointment.AppointmentDate != request.AppointmentDate);
+
+        if (shouldCheckDoctorConflict
+            && await DoctorHasScheduledAppointmentAtAsync(
+                connection,
+                request.IdDoctor,
+                request.AppointmentDate,
+                cancellationToken,
+                idAppointment
+            ))
+        {
+            throw new AppointmentConflictException(
+                "Doctor already has a scheduled appointment at the selected time."
+            );
+        }
+
+        await using var command = new SqlCommand("""
+        UPDATE dbo.Appointments
+        SET
+            IdPatient = @IdPatient,
+            IdDoctor = @IdDoctor,
+            AppointmentDate = @AppointmentDate,
+            Status = @Status,
+            Reason = @Reason,
+            InternalNotes = @InternalNotes
+        WHERE IdAppointment = @IdAppointment;
+        """, connection);
+
+        command.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+        command.Parameters.Add("@IdPatient", SqlDbType.Int).Value = request.IdPatient;
+        command.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = request.IdDoctor;
+        command.Parameters.Add("@AppointmentDate", SqlDbType.DateTime2).Value = request.AppointmentDate;
+        command.Parameters.Add("@Status", SqlDbType.NVarChar, 30).Value = request.Status.Trim();
+        command.Parameters.Add("@Reason", SqlDbType.NVarChar, 250).Value = request.Reason.Trim();
+        command.Parameters.Add("@InternalNotes", SqlDbType.NVarChar, 500).Value =
+            string.IsNullOrWhiteSpace(request.InternalNotes)
+                ? DBNull.Value
+                : request.InternalNotes.Trim();
+
+        var affectedRows = await command.ExecuteNonQueryAsync(cancellationToken);
+
+        return affectedRows > 0;
     }
 
     public Task<bool> DeleteAppointmentAsync(
@@ -288,7 +370,8 @@ public class AppointmentService : IAppointmentService
         SqlConnection connection,
         int idDoctor,
         DateTime appointmentDate,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        int? excludedAppointmentId = null
     )
     {
         await using var command = new SqlCommand("""
@@ -296,15 +379,89 @@ public class AppointmentService : IAppointmentService
         FROM dbo.Appointments
         WHERE IdDoctor = @IdDoctor
           AND AppointmentDate = @AppointmentDate
-          AND Status = N'Scheduled';
+          AND Status = N'Scheduled'
+          AND (@ExcludedAppointmentId IS NULL OR IdAppointment <> @ExcludedAppointmentId);
         """, connection);
 
         command.Parameters.Add("@IdDoctor", SqlDbType.Int).Value = idDoctor;
         command.Parameters.Add("@AppointmentDate", SqlDbType.DateTime2).Value = appointmentDate;
+        command.Parameters.Add("@ExcludedAppointmentId", SqlDbType.Int).Value =
+            excludedAppointmentId.HasValue ? excludedAppointmentId.Value : DBNull.Value;
 
         var result = await command.ExecuteScalarAsync(cancellationToken);
 
         return Convert.ToInt32(result) > 0;
     }
+
+    private static void ValidateUpdateAppointmentRequest(UpdateAppointmentRequestDto request)
+    {
+        if (request.IdPatient <= 0)
+        {
+            throw new InvalidAppointmentRequestException("Patient id must be greater than 0.");
+        }
+
+        if (request.IdDoctor <= 0)
+        {
+            throw new InvalidAppointmentRequestException("Doctor id must be greater than 0.");
+        }
+
+        if (!AllowedAppointmentStatuses.Contains(request.Status.Trim()))
+        {
+            throw new InvalidAppointmentRequestException(
+                "Status must be one of: Scheduled, Completed, Cancelled."
+            );
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            throw new InvalidAppointmentRequestException("Reason cannot be empty.");
+        }
+
+        if (request.Reason.Trim().Length > 250)
+        {
+            throw new InvalidAppointmentRequestException("Reason cannot be longer than 250 characters.");
+        }
+
+        if (request.InternalNotes is not null && request.InternalNotes.Trim().Length > 500)
+        {
+            throw new InvalidAppointmentRequestException(
+                "Internal notes cannot be longer than 500 characters."
+            );
+        }
+    }
+
+    private static async Task<AppointmentState?> GetAppointmentStateAsync(
+        SqlConnection connection,
+        int idAppointment,
+        CancellationToken cancellationToken
+    )
+    {
+        await using var command = new SqlCommand("""
+        SELECT IdDoctor, AppointmentDate, Status
+        FROM dbo.Appointments
+        WHERE IdAppointment = @IdAppointment;
+        """, connection);
+
+        command.Parameters.Add("@IdAppointment", SqlDbType.Int).Value = idAppointment;
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new AppointmentState(
+            reader.GetInt32(reader.GetOrdinal("IdDoctor")),
+            reader.GetDateTime(reader.GetOrdinal("AppointmentDate")),
+            reader.GetString(reader.GetOrdinal("Status"))
+        );
+    }
+
+    private sealed record AppointmentState(
+    int IdDoctor,
+    DateTime AppointmentDate,
+    string Status
+);
 
 }

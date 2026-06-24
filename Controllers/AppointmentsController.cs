@@ -151,4 +151,73 @@ public class AppointmentsController : ControllerBase
         }
     }
 
+    [HttpPut("{idAppointment:int}")]
+    [ProducesResponseType(typeof(AppointmentDetailsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<AppointmentDetailsDto>> UpdateAppointment(
+    [FromRoute] int idAppointment,
+    [FromBody] UpdateAppointmentRequestDto request,
+    CancellationToken cancellationToken
+)
+    {
+        if (idAppointment <= 0)
+        {
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = "Appointment id must be greater than 0."
+            });
+        }
+
+        try
+        {
+            var wasUpdated = await _appointmentService.UpdateAppointmentAsync(
+                idAppointment,
+                request,
+                cancellationToken
+            );
+
+            if (!wasUpdated)
+            {
+                return NotFound(new ErrorResponseDto
+                {
+                    Message = $"Appointment with id {idAppointment} was not found."
+                });
+            }
+
+            var updatedAppointment = await _appointmentService.GetAppointmentByIdAsync(
+                idAppointment,
+                cancellationToken
+            );
+
+            return Ok(updatedAppointment);
+        }
+        catch (InvalidAppointmentRequestException ex)
+        {
+            return BadRequest(new ErrorResponseDto
+            {
+                Message = ex.Message
+            });
+        }
+        catch (AppointmentConflictException ex)
+        {
+            return Conflict(new ErrorResponseDto
+            {
+                Message = ex.Message
+            });
+        }
+        catch (SqlException)
+        {
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new ErrorResponseDto
+                {
+                    Message = "A database error occurred while updating the appointment."
+                }
+            );
+        }
+    }
+
 }
